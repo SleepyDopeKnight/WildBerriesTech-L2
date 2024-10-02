@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"golang.org/x/net/html"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,8 +18,8 @@ import (
 
 Программа должна проходить все тесты. Код должен проходить проверки go vet и golint.
 */
-var visited = make(map[string]bool)
-var firstIn bool = true
+var firstIn bool = true             // Нужна для создания index.html, после первого входа она всегда false.
+var visited = make(map[string]bool) // Сюда записываем посещенные урлы, чтобы рекурсия не пошла по кругу.
 
 func main() {
 
@@ -27,54 +28,40 @@ func main() {
 		fmt.Println(err)
 	}
 
+	rootDomain := u.Host                        // Нужна для проверки, что рекурсия не ушла дальше заданного ресура.
 	rootLink := u.Scheme + "://" + u.Host + "/" // Для того чтобы обход начинался с корня, а подать ссылку мог не корня
-	crawl(rootLink)
+	crawl(rootLink, rootDomain)
 }
 
-func crawl(url string) {
-	if visited[url] {
+func crawl(url, rootDomain string) {
+	if visited[url] { // Если посещали уже, то выходим из функции.
 		return
 	}
-	visited[url] = true
 
-	fmt.Println("Downloading: ", url)
-	if err := downloadPage(url); err != nil {
-		fmt.Println("Failed to download page: ", err)
-	}
+	visited[url] = true                    // Записываем урл в мапу посещенных.
+	if strings.Contains(url, rootDomain) { // Смотрим, содрежит ли урл изначальный домен, чтобы рекурсия не пошла дальше.
+		fmt.Println("Downloading: ", url)
 
-	links := extractLinks(url)
-	for _, link := range links {
-		crawl(convertRelativeUrlToAbsolute(url, link))
+		links, err := downloadAndExtractLinks(url) // Скачиваем страницу и достаем ссылки.
+		if err != nil {
+			fmt.Println("Failed to download page: ", err)
+		}
+
+		for link := range links {
+			if link != "/" { // Записывает иногда ссылки на другие в таком виде, чтобы их пропускать тоже.
+				crawl(convertRelativeUrlToAbsolute(url, link), rootDomain)
+			}
+		}
 	}
 }
 
-func extractLinks(url string) []string {
-	var links []string // Сюда будем записывать ссылки со страницы.
-
-	resp, err := http.Get(url) // C помощью get запроса получаем содержимое страницы.
-	if err != nil {
-		fmt.Println(err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	doc, err := html.Parse(resp.Body) // Парсим нашу страницу.
-	if err != nil {
-		fmt.Println(err)
-		return nil
-	}
-
-	extractLinksFromNode(doc, &links)
-
-	return links
-}
-
-func extractLinksFromNode(node *html.Node, links *[]string) {
+func extractLinksFromNode(node *html.Node, links *map[string]bool) {
 	if node.Type == html.ElementNode && node.Data == "a" { // Проверяем что элемент ноды является тегом со ссылкой.
-		for _, a := range node.Attr {
+		for i, a := range node.Attr {
 			if a.Key == "href" { // Проверяем по ключу, что этот атрибут содержит ссылку.
 				if !strings.HasPrefix(a.Val, "#") { // Игнорирование якорных ссылок.
-					*links = append(*links, a.Val) // Добавляем по значению ссылки в наш слайс.
+					(*links)[a.Val] = true // Добавляем по значению ссылки в нашу мапу.
+					node.Attr[i].Val = convertToLocalPath(a.Val)
 				}
 			}
 		}
@@ -85,57 +72,51 @@ func extractLinksFromNode(node *html.Node, links *[]string) {
 	}
 }
 
-func jopa(node *html.Node) {
-	if node.Type == html.ElementNode && node.Data == "a" { // Проверяем что элемент ноды является тегом со ссылкой.
-		for i, a := range node.Attr {
-			if a.Key == "href" { // Проверяем по ключу, что этот атрибут содержит ссылку.
-				if !strings.HasPrefix(a.Val, "#") { // Игнорирование якорных ссылок.
-					node.Attr[i].Val = convertToLocalPath(a.Val)
-				}
-			}
-		}
-	}
+func downloadAndExtractLinks(url string) (map[string]bool, error) {
+	links := make(map[string]bool) // Сюда будем записывать ссылки со страницы.
 
-	for c := (*node).FirstChild; c != nil; c = c.NextSibling { // Рекурсивный цикл, который ходит по дочерним узлам дерева.
-		jopa(c) // Передаем сюда следующую ноду.
-	}
-}
-
-func downloadPage(url string) error {
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) // C помощью get запроса получаем содержимое страницы.
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bad request: %s", resp.Status)
+		return nil, fmt.Errorf("bad request: %s", resp.Status)
 	}
 
-	var fileName string
-	if firstIn {
-		fileName = "index.html"
-	} else {
-		fileName = path.Base(url)
-		if !strings.Contains(fileName, ".") {
-			fileName += ".html"
-		}
-	}
-
-	file, err := os.Create(fileName)
+	file, err := createFile(url) // Создаем файл.
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
-	//_, err = io.Copy(file, resp.Body)
-	doc, _ := html.Parse(resp.Body)
-	jopa(doc)
-	html.Render(file, doc)
-	//return fmt.Errorf("error writing HTML to file: %s", err)
-	firstIn = false
+	doc, _ := html.Parse(resp.Body)   // Парсим нашу страницу.
+	extractLinksFromNode(doc, &links) // Извлекаем ссылки на другие страницы.
+	_, err = io.Copy(file, resp.Body) // Копируем страницу в файл.
+	if err != nil {
+		return nil, fmt.Errorf("error writing HTML to file: %s", err)
+	}
 
-	return err
+	return links, nil
+}
+
+func createFile(url string) (*os.File, error) {
+	var fileName string
+	if firstIn { // Если первый вызов, то получаем имя главной страницы index.html
+		fileName = "index.html"
+	} else {
+		fileName = getFileName(url) // Получаем имя файла.
+	}
+
+	file, err := os.Create(fileName) // Создаем сам файл.
+	if err != nil {
+		return nil, fmt.Errorf("failed creating file: %s", err)
+	}
+
+	firstIn = false // После первого вызова зануляем наш флаг.
+
+	return file, nil
 }
 
 func convertRelativeUrlToAbsolute(pageUrl, href string) string {
@@ -155,18 +136,24 @@ func convertRelativeUrlToAbsolute(pageUrl, href string) string {
 }
 
 func convertToLocalPath(href string) string {
-	wd, err := os.Getwd()
+	var fileName string
+
+	wd, err := os.Getwd() // Получаем путь, где мы находимся
 	if err != nil {
 		fmt.Println(err)
 		return ""
 	}
 
-	var fileName string
-	if strings.Contains(path.Base(href), ".") {
-		fileName = path.Base(href)
-	} else {
-		fileName = path.Base(href + ".html")
-	}
+	fileName = getFileName(href) // Получаем имя файла.
 
 	return wd + "/" + fileName
+}
+
+func getFileName(url string) string {
+	fileName := path.Base(url)
+	if !strings.Contains(fileName, ".") { // Проверяем содержит ли имя файла расширение.
+		fileName += ".html" // Если не содержит, то добавляем .html
+	}
+
+	return fileName
 }
