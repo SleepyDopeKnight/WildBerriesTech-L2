@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"golang.org/x/net/html"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -18,17 +20,19 @@ import (
 
 Программа должна проходить все тесты. Код должен проходить проверки go vet и golint.
 */
-var firstIn bool = true             // Нужна для создания index.html, после первого входа она всегда false.
-var visited = make(map[string]bool) // Сюда записываем посещенные урлы, чтобы рекурсия не пошла по кругу.
+var (
+	firstIn    bool   = true                  // Нужна для создания index.html, после первого входа она всегда false.
+	visited           = make(map[string]bool) // Сюда записываем посещенные урлы, чтобы рекурсия не пошла по кругу.
+	rootDomain string                         // Нужна для проверки, что рекурсия не ушла дальше заданного ресура.
+)
 
 func main() {
-
 	u, err := url.Parse("https://www.marinohall.com")
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	rootDomain := u.Host                        // Нужна для проверки, что рекурсия не ушла дальше заданного ресура.
+	rootDomain = u.Host
 	rootLink := u.Scheme + "://" + u.Host + "/" // Для того чтобы обход начинался с корня, а подать ссылку мог не корня
 	crawl(rootLink, rootDomain)
 }
@@ -73,8 +77,26 @@ func extractLinksFromNode(node *html.Node, links *map[string]bool) {
 }
 
 func downloadAndExtractLinks(url string) (map[string]bool, error) {
-	links := make(map[string]bool) // Сюда будем записывать ссылки со страницы.
+	buf, err := downloadPage(url)
+	if err != nil {
+		return nil, err
+	}
 
+	file, err := createFile(url) // Создаем файл.
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	links, err := extractLinksAndSaveFile(buf, file)
+	if err != nil {
+		return nil, err
+	}
+
+	return links, nil
+}
+
+func downloadPage(url string) (*bytes.Buffer, error) {
 	resp, err := http.Get(url) // C помощью get запроса получаем содержимое страницы.
 	if err != nil {
 		return nil, err
@@ -85,38 +107,58 @@ func downloadAndExtractLinks(url string) (map[string]bool, error) {
 		return nil, fmt.Errorf("bad request: %s", resp.Status)
 	}
 
-	file, err := createFile(url) // Создаем файл.
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, resp.Body) // Сохраняем данные в буфер, для переиспользования body.
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	return &buf, nil
+}
 
-	doc, _ := html.Parse(resp.Body)   // Парсим нашу страницу.
-	extractLinksFromNode(doc, &links) // Извлекаем ссылки на другие страницы.
-	_, err = io.Copy(file, resp.Body) // Копируем страницу в файл.
-	if err != nil {
-		return nil, fmt.Errorf("error writing HTML to file: %s", err)
+func extractLinksAndSaveFile(buf *bytes.Buffer, file *os.File) (map[string]bool, error) {
+	links := make(map[string]bool) // Сюда будем записывать ссылки со страницы.
+
+	doc, _ := html.Parse(bytes.NewReader(buf.Bytes())) // Парсим нашу страницу из буфера через ридер, для повторного чтения.
+	extractLinksFromNode(doc, &links)                  // Извлекаем ссылки на другие страницы.
+
+	if path.Ext(file.Name()) == ".html" {
+		err := html.Render(file, doc) // Используем рендер для записи, тк io.copy не сохранит изменение ссылок внутри страницы.
+		if err != nil {
+			return nil, fmt.Errorf("error render to file: %s", err)
+		}
+	} else {
+		_, err := io.Copy(file, bytes.NewReader(buf.Bytes())) // Копируем данные в файл из буфера через ридер, для повторного чтения.
+		if err != nil {
+			return nil, fmt.Errorf("error writing to file: %s", err)
+		}
 	}
-
 	return links, nil
 }
 
 func createFile(url string) (*os.File, error) {
-	var fileName string
-	if firstIn { // Если первый вызов, то получаем имя главной страницы index.html
-		fileName = "index.html"
-	} else {
-		fileName = getFileName(url) // Получаем имя файла.
-	}
+	dp := createDirAndGetPath(url)
 
-	file, err := os.Create(fileName) // Создаем сам файл.
+	file, err := os.Create(getFileName(dp)) // Создаем сам файл.
 	if err != nil {
 		return nil, fmt.Errorf("failed creating file: %s", err)
 	}
 
-	firstIn = false // После первого вызова зануляем наш флаг.
-
 	return file, nil
+}
+
+func createDirAndGetPath(ur string) string {
+	u, err := url.Parse(ur)
+	if err != nil {
+		fmt.Println("Failed to parse URL: ", err)
+		return ""
+	}
+
+	err = os.MkdirAll(u.Host+path.Dir(u.Path), os.ModePerm)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return u.Host + u.Path
 }
 
 func convertRelativeUrlToAbsolute(pageUrl, href string) string {
@@ -136,24 +178,27 @@ func convertRelativeUrlToAbsolute(pageUrl, href string) string {
 }
 
 func convertToLocalPath(href string) string {
-	var fileName string
-
 	wd, err := os.Getwd() // Получаем путь, где мы находимся
 	if err != nil {
 		fmt.Println(err)
 		return ""
 	}
 
-	fileName = getFileName(href) // Получаем имя файла.
-
-	return wd + "/" + fileName
+	return wd + "/" + rootDomain + setExtHTML(href)
 }
 
-func getFileName(url string) string {
-	fileName := path.Base(url)
-	if !strings.Contains(fileName, ".") { // Проверяем содержит ли имя файла расширение.
-		fileName += ".html" // Если не содержит, то добавляем .html
+func setExtHTML(url string) string {
+	if filepath.Ext(path.Base(url)) == "" { // Проверяем содержит ли имя файла расширение.
+		url += ".html" // Если не содержит, то добавляем .html
 	}
 
-	return fileName
+	return url
+}
+
+func getFileName(dp string) string {
+	if firstIn { // Если первый вызов, то получаем имя главной страницы index.html
+		firstIn = false
+		return path.Dir(dp) + "/index.html"
+	}
+	return setExtHTML(dp) // Проверяем нужно ли добавить расширение файлу.
 }
