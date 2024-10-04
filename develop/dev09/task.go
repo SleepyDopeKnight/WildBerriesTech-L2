@@ -42,8 +42,8 @@ func crawl(url, rootDomain string) {
 		return
 	}
 
-	visited[url] = true                    // Записываем урл в мапу посещенных.
-	if strings.Contains(url, rootDomain) { // Смотрим, содрежит ли урл изначальный домен, чтобы рекурсия не пошла дальше.
+	visited[url] = true                                                   // Записываем урл в мапу посещенных.
+	if strings.Contains(url, rootDomain) && filepath.Ext(url) != ".dmg" { // Смотрим, содрежит ли урл изначальный домен, чтобы рекурсия не пошла дальше.
 		fmt.Println("Downloading: ", url)
 
 		links, err := downloadAndExtractLinks(url) // Скачиваем страницу и достаем ссылки.
@@ -59,25 +59,35 @@ func crawl(url, rootDomain string) {
 	}
 }
 
-func extractLinksFromNode(node *html.Node, links *map[string]bool) {
-	if node.Type == html.ElementNode && node.Data == "a" { // Проверяем что элемент ноды является тегом со ссылкой.
-		for i, a := range node.Attr {
-			if a.Key == "href" { // Проверяем по ключу, что этот атрибут содержит ссылку.
-				if !strings.HasPrefix(a.Val, "#") { // Игнорирование якорных ссылок.
-					(*links)[a.Val] = true // Добавляем по значению ссылки в нашу мапу.
-					node.Attr[i].Val = convertToLocalPath(a.Val)
+func extractLinksFromNodeAndCorrectPath(url string, node *html.Node, links *map[string]bool) {
+	fp := strings.Trim(createDirAndGetPath(url), rootDomain) // Получаем путь и вырезаем рутовую директорию.
+	fpSlice := strings.Split(fp, "/")
+	fpLen := len(fpSlice) - 2 // -2 т.к. в начале пути есть слэш.
+	prevDir := strings.Repeat("../", fpLen)
+
+	for i, a := range node.Attr {
+		if a.Key == "href" || a.Key == "src" || a.Key == "style" { // Проверяем по ключу, что этот атрибут содержит ссылку.
+			if !strings.HasPrefix(a.Val, "#") { // Игнорирование якорных ссылок.
+				(*links)[a.Val] = true // Добавляем по значению ссылки в нашу мапу.
+				node.Attr[i].Val = TrimSlashAndInitHome(a.Val)
+				if a.Key == "style" && strings.Contains(a.Val, "background-image:") {
+					node.Attr[i].Val = strings.Replace(node.Attr[i].Val, "/", prevDir, 1)
+					node.Attr[i].Val = strings.Replace(node.Attr[i].Val, "'", "", 2)
+				}
+				if filepath.Ext(a.Val) != ".html" && a.Key != "style" {
+					node.Attr[i].Val = prevDir + node.Attr[i].Val
 				}
 			}
 		}
 	}
 
 	for c := (*node).FirstChild; c != nil; c = c.NextSibling { // Рекурсивный цикл, который ходит по дочерним узлам дерева.
-		extractLinksFromNode(c, links) // Передаем сюда следующую ноду.
+		extractLinksFromNodeAndCorrectPath(url, c, links) // Передаем сюда следующую ноду.
 	}
 }
 
 func downloadAndExtractLinks(url string) (map[string]bool, error) {
-	buf, err := downloadPage(url)
+	buf, err := downloadPage(url) // Скачиваем страницу и сохраняем тело в буфер.
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +98,7 @@ func downloadAndExtractLinks(url string) (map[string]bool, error) {
 	}
 	defer file.Close()
 
-	links, err := extractLinksAndSaveFile(buf, file)
+	links, err := extractLinksAndSaveFile(url, buf, file)
 	if err != nil {
 		return nil, err
 	}
@@ -115,11 +125,11 @@ func downloadPage(url string) (*bytes.Buffer, error) {
 	return &buf, nil
 }
 
-func extractLinksAndSaveFile(buf *bytes.Buffer, file *os.File) (map[string]bool, error) {
+func extractLinksAndSaveFile(url string, buf *bytes.Buffer, file *os.File) (map[string]bool, error) {
 	links := make(map[string]bool) // Сюда будем записывать ссылки со страницы.
 
-	doc, _ := html.Parse(bytes.NewReader(buf.Bytes())) // Парсим нашу страницу из буфера через ридер, для повторного чтения.
-	extractLinksFromNode(doc, &links)                  // Извлекаем ссылки на другие страницы.
+	doc, _ := html.Parse(bytes.NewReader(buf.Bytes()))   // Парсим нашу страницу из буфера через ридер, для повторного чтения.
+	extractLinksFromNodeAndCorrectPath(url, doc, &links) // Извлекаем ссылки на другие страницы.
 
 	if path.Ext(file.Name()) == ".html" {
 		err := html.Render(file, doc) // Используем рендер для записи, тк io.copy не сохранит изменение ссылок внутри страницы.
@@ -177,14 +187,16 @@ func convertRelativeUrlToAbsolute(pageUrl, href string) string {
 	return base.ResolveReference(ref).String() // Получаем путь, склеиваем или оставляем неизменным в зависимости от href.
 }
 
-func convertToLocalPath(href string) string {
-	wd, err := os.Getwd() // Получаем путь, где мы находимся
-	if err != nil {
-		fmt.Println(err)
-		return ""
-	}
+//func convertToLocalPath(href string) string {
+//
+//}
 
-	return wd + "/" + rootDomain + setExtHTML(href)
+func TrimSlashAndInitHome(href string) string {
+	if href == "/" {
+		return "index.html"
+	} else {
+		return setExtHTML(strings.TrimPrefix(href, "/"))
+	}
 }
 
 func setExtHTML(url string) string {
