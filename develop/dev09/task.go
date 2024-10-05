@@ -60,8 +60,8 @@ func crawl(url, rootDomain string) {
 }
 
 func extractLinksFromNodeAndCorrectPath(url string, node *html.Node, links *map[string]bool) {
-	fp := strings.Trim(createDirAndGetPath(url), rootDomain) // Получаем путь и вырезаем рутовую директорию.
-	fpLen := len(strings.Split(fp, "/")) - 2                 // -2 т.к. в начале пути есть слэш.
+	fp := strings.Trim(getDirPath(url), rootDomain) // Получаем путь и вырезаем рутовую директорию.
+	fpLen := len(strings.Split(fp, "/")) - 2        // -2 т.к. в начале пути есть слэш.
 	prevDir := strings.Repeat("../", fpLen)
 
 	for i, a := range node.Attr {
@@ -145,8 +145,9 @@ func extractLinksAndSaveFile(url string, buf *bytes.Buffer, file *os.File) (map[
 	return links, nil
 }
 
-func createFile(url string) (*os.File, error) {
-	dp := createDirAndGetPath(url)
+func createFile(ur string) (*os.File, error) {
+	createDir(ur)
+	dp := getDirPath(ur)
 
 	file, err := os.Create(getFileName(dp)) // Создаем сам файл.
 	if err != nil {
@@ -156,16 +157,20 @@ func createFile(url string) (*os.File, error) {
 	return file, nil
 }
 
-func createDirAndGetPath(ur string) string {
-	u, err := url.Parse(ur)
-	if err != nil {
-		fmt.Println("Failed to parse URL: ", err)
-		return ""
-	}
+func createDir(ur string) {
+	dp := getDirPath(ur)
 
-	err = os.MkdirAll(u.Host+path.Dir(u.Path), os.ModePerm)
+	err := os.MkdirAll(strings.TrimSuffix(dp, "/"+path.Base(dp)), os.ModePerm)
 	if err != nil {
 		fmt.Println(err)
+	}
+}
+
+func getDirPath(ur string) string {
+	u, err := url.Parse(ur)
+	if err != nil {
+		fmt.Println("Failed to parse URL to get path: ", err)
+		return ""
 	}
 
 	return u.Host + u.Path
