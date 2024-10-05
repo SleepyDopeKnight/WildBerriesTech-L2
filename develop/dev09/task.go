@@ -61,8 +61,7 @@ func crawl(url, rootDomain string) {
 
 func extractLinksFromNodeAndCorrectPath(url string, node *html.Node, links *map[string]bool) {
 	fp := strings.Trim(createDirAndGetPath(url), rootDomain) // Получаем путь и вырезаем рутовую директорию.
-	fpSlice := strings.Split(fp, "/")
-	fpLen := len(fpSlice) - 2 // -2 т.к. в начале пути есть слэш.
+	fpLen := len(strings.Split(fp, "/")) - 2                 // -2 т.к. в начале пути есть слэш.
 	prevDir := strings.Repeat("../", fpLen)
 
 	for i, a := range node.Attr {
@@ -71,8 +70,9 @@ func extractLinksFromNodeAndCorrectPath(url string, node *html.Node, links *map[
 				(*links)[a.Val] = true // Добавляем по значению ссылки в нашу мапу.
 				node.Attr[i].Val = TrimSlashAndInitHome(a.Val)
 				if a.Key == "style" && strings.Contains(a.Val, "background-image:") {
+					node.Attr[i].Val = getStylePicPath(node.Attr[i].Val)
+					(*links)[node.Attr[i].Val] = true
 					node.Attr[i].Val = strings.Replace(node.Attr[i].Val, "/", prevDir, 1)
-					node.Attr[i].Val = strings.Replace(node.Attr[i].Val, "'", "", 2)
 				}
 				if filepath.Ext(a.Val) != ".html" && a.Key != "style" {
 					node.Attr[i].Val = prevDir + node.Attr[i].Val
@@ -187,10 +187,6 @@ func convertRelativeUrlToAbsolute(pageUrl, href string) string {
 	return base.ResolveReference(ref).String() // Получаем путь, склеиваем или оставляем неизменным в зависимости от href.
 }
 
-//func convertToLocalPath(href string) string {
-//
-//}
-
 func TrimSlashAndInitHome(href string) string {
 	if href == "/" {
 		return "index.html"
@@ -213,4 +209,17 @@ func getFileName(dp string) string {
 		return path.Dir(dp) + "/index.html"
 	}
 	return setExtHTML(dp) // Проверяем нужно ли добавить расширение файлу.
+}
+
+func getStylePicPath(dp string) string {
+	strings.Replace(dp, "'", "", 2)
+
+	start := strings.Index(dp, "(")
+	end := strings.Index(dp, ")")
+
+	if start == -1 || end == -1 {
+		return ""
+	}
+
+	return dp[start+1 : end]
 }
