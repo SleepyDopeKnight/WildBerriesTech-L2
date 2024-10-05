@@ -70,8 +70,8 @@ func extractLinksFromNodeAndCorrectPath(url string, node *html.Node, links *map[
 				(*links)[a.Val] = true // Добавляем по значению ссылки в нашу мапу.
 				node.Attr[i].Val = TrimSlashAndInitHome(a.Val)
 				if a.Key == "style" && strings.Contains(a.Val, "background-image:") {
-					node.Attr[i].Val = getStylePicPath(node.Attr[i].Val)
-					(*links)[node.Attr[i].Val] = true
+					node.Attr[i].Val = strings.Replace(node.Attr[i].Val, "'", "", 2)
+					(*links)[getStylePicPath(node.Attr[i].Val)] = true
 					node.Attr[i].Val = strings.Replace(node.Attr[i].Val, "/", prevDir, 1)
 				}
 				if filepath.Ext(a.Val) != ".html" && a.Key != "style" {
@@ -212,8 +212,6 @@ func getFileName(dp string) string {
 }
 
 func getStylePicPath(dp string) string {
-	strings.Replace(dp, "'", "", 2)
-
 	start := strings.Index(dp, "(")
 	end := strings.Index(dp, ")")
 
