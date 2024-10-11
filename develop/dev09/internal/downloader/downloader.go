@@ -41,7 +41,7 @@ func DownloadAndExtractLinks(url string) (map[string]bool, error) {
 func downloadPage(url string) (*bytes.Buffer, error) {
 	resp, err := http.Get(url) // C помощью get запроса получаем содержимое страницы.
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("http get: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -52,27 +52,33 @@ func downloadPage(url string) (*bytes.Buffer, error) {
 	var buf bytes.Buffer
 	_, err = io.Copy(&buf, resp.Body) // Сохраняем данные в буфер, для переиспользования body.
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed copy body to buffer: %s", err)
 	}
+
 	return &buf, nil
 }
 
 func extractLinksAndSaveFile(url string, buf *bytes.Buffer, file *os.File) (map[string]bool, error) {
 	links := make(map[string]bool) // Сюда будем записывать ссылки со страницы.
 
-	doc, _ := html.Parse(bytes.NewReader(buf.Bytes())) // Парсим нашу страницу из буфера через ридер, для повторного чтения.
-	ex.CorrectAndExtractHTMLLinks(url, doc, &links)    // Извлекаем ссылки на другие страницы.
+	doc, err := html.Parse(bytes.NewReader(buf.Bytes())) // Парсим нашу страницу из буфера через ридер, для повторного чтения.
+	if err != nil {
+		return nil, fmt.Errorf("html parse: %v", err)
+	}
+
+	ex.CorrectAndExtractHTMLLinks(url, doc, &links) // Извлекаем ссылки на другие страницы.
 
 	if path.Ext(file.Name()) == ".html" {
-		err := html.Render(file, doc) // Используем рендер для записи, тк io.copy не сохранит изменение ссылок внутри страницы.
+		err = html.Render(file, doc) // Используем рендер для записи, тк io.copy не сохранит изменение ссылок внутри страницы.
 		if err != nil {
 			return nil, fmt.Errorf("error render to file: %s", err)
 		}
 	} else {
-		_, err := io.Copy(file, bytes.NewReader(buf.Bytes())) // Копируем данные в файл из буфера через ридер, для повторного чтения.
+		_, err = io.Copy(file, bytes.NewReader(buf.Bytes())) // Копируем данные в файл из буфера через ридер, для повторного чтения.
 		if err != nil {
 			return nil, fmt.Errorf("error writing to file: %s", err)
 		}
 	}
+
 	return links, nil
 }

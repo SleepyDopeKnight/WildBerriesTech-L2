@@ -9,33 +9,35 @@ import (
 )
 
 // GetFullPath Получает полный путь, от корневой директории сайта.
-func GetFullPath(ur string) string {
+func GetFullPath(ur string) (string, error) {
 	u, err := url.Parse(ur)
 	if err != nil {
-		fmt.Println("Failed to parse URL to get path: ", err)
-		return ""
+		return "", fmt.Errorf("failed to parse URL to get full path: %s", err)
 	}
 
-	return u.Host + u.Path
+	return u.Host + u.Path, nil
 }
 
 // GetPathToRoot Получает путь, который вернет к корневой директории сайта.
-func GetPathToRoot(ur string) string {
+func GetPathToRoot(ur string) (string, error) {
 	u, err := url.Parse(ur)
 	if err != nil {
-		fmt.Println("Failed to parse URL to get root path: ", err)
-		return ""
+		return "", fmt.Errorf("failed to parse URL to get root path: %s", err)
 	}
 
-	fp := strings.Trim(GetFullPath(ur), u.Host) // Получаем путь и вырезаем рутовую директорию.
-	fpLen := len(strings.Split(fp, "/")) - 2    // -2 т.к. в начале пути есть слэш.
+	fullPath, err := GetFullPath(ur)
+	if err != nil {
+		return "", fmt.Errorf("GetFullPath error in GetPathToRoot: %s", err)
+	}
 
-	return strings.Repeat("../", fpLen)
+	fp := strings.Trim(fullPath, u.Host)     // Получаем путь и вырезаем рутовую директорию.
+	fpLen := len(strings.Split(fp, "/")) - 2 // -2 т.к. в начале пути есть слэш.
+
+	return strings.Repeat("../", fpLen), nil
 }
 
 // GetFileName Получает имя для файла вместе с путем до него и расширением, для рутовой дает имя index.html.
 func GetFileName(dirPath string) string {
-
 	if strings.Trim(dirPath, path.Dir(dirPath)) == "/" { // Если остается слэш, то получаем имя главной страницы index.html
 		return dirPath + "index.html"
 	}

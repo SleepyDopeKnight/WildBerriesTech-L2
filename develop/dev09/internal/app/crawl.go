@@ -1,7 +1,7 @@
 package app
 
 import (
-	"dev09/downloader"
+	"dev09/internal/downloader"
 	"dev09/utils"
 	"fmt"
 	"path/filepath"
@@ -24,8 +24,13 @@ func Crawl(url, rootDomain string, visited *map[string]bool) {
 		}
 
 		for link := range links {
-			if link != "/" { // Записывает иногда ссылки на другие в таком виде, чтобы их пропускать тоже.
-				Crawl(utils.ConvertRelativeURLToAbsolute(url, link), rootDomain, visited)
+			if link != "/" { // Записывает иногда ссылки на другие сайты в таком виде, чтобы их пропускать тоже.
+				absPAth, err := utils.ConvertRelativeURLToAbsolute(url, link)
+				if err != nil {
+					fmt.Println("Failed to convert link to absolute: ", err)
+				} else {
+					Crawl(absPAth, rootDomain, visited)
+				}
 			}
 		}
 	}
