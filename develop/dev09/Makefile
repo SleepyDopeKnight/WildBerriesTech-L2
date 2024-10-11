@@ -1,4 +1,6 @@
-.PHONY: test govet golint
+.PHONY: all test govet golint
+
+all: task test govet golint
 
 task: task.go
 	@go run .

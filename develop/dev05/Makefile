@@ -1,4 +1,6 @@
-.PHONY: task test govet golint clean rebuild
+.PHONY: all task test govet golint clean rebuild
+
+all: task test govet golint
 
 task: task.go
 	@go build -o myGrep
@@ -15,6 +17,4 @@ golint:
 clean:
 	@rm -f myGrep
 
-rebuild:
-	@make clean
-	@make task
+rebuild: clean all
